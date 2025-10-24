@@ -14,6 +14,12 @@ class HyprDVD:
 
 		self.requested_size = size
 
+		self.screen_width  = 1920
+		self.screen_height = 1080
+		self.offset_x = 0      # global origin X of the monitor owning this window
+		self.offset_y = 0      # global origin Y of the monitor owning this window
+
+
 		self.get_screen_size()
 		self.set_window_size()
 
@@ -53,7 +59,9 @@ class HyprDVD:
 		# Otherwise, override with actual client values so the animation
 		# starts from the Hyprland-reported location/size.
 		try:
-			instance.window_x, instance.window_y = client['at']
+			ax, ay = client['at']
+			instance.window_x = int(ax) - instance.offset_x
+			instance.window_y = int(ay) - instance.offset_y
 			instance.window_width, instance.window_height = client['size']
 			instance.position_synced = True  # Position is already from Hyprland
 		except Exception:
@@ -102,6 +110,8 @@ class HyprDVD:
 				transform = monitor['transform'] in [1, 3, 5, 7]
 				self.screen_width = int(monitor['width'] / monitor['scale']) if not transform else int(monitor['height'] / monitor['scale'])
 				self.screen_height = int(monitor['height'] / monitor['scale']) if not transform else int(monitor['width'] / monitor['scale'])
+				self.offset_x = int(monitor.get('x', 0))
+				self.offset_y = int(monitor.get('y', 0))
 				break
 
 	def get_window_position_and_size(self, clients):

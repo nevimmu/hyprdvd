@@ -5,19 +5,24 @@ from .hyprDVD import HyprDVD
 
 class HyprDVDManager:
 	'''Manages all HyprDVD windows.'''
+
 	def __init__(self, size=None):
 		self.windows = []
-		self.animation_enabled_workspaces = {}
 		self.window_size = size
+		self._disabled_workspaces = set()
+		self._animation_original_state = None
 
 	def add_window(self, event_data):
 		'''Add a new window to manage'''
 		window = HyprDVD(event_data, self, size=self.window_size)
 
 		attempts = 0
+		max_x_span = max(0, window.screen_width - window.window_width)
+		max_y_span = max(0, window.screen_height - window.window_height)
+
 		while attempts < 100:
-			random_x = random.randrange(0, window.screen_width - window.window_width)
-			random_y = random.randrange(0, window.screen_height - window.window_height)
+			random_x = random.randint(0, max_x_span) if max_x_span else 0
+			random_y = random.randint(0, max_y_span) if max_y_span else 0
 
 			overlapping = False
 			for other_window in self.windows:
@@ -25,15 +30,17 @@ class HyprDVDManager:
 						random_x < other_window.window_x + other_window.window_width and
 						random_x + window.window_width > other_window.window_x and
 						random_y < other_window.window_y + other_window.window_height and
-							random_y + window.window_height > other_window.window_y):
+						random_y + window.window_height > other_window.window_y):
 					overlapping = True
 					break
 			if not overlapping:
 				# Set the window's internal position before appending
 				window.window_x = random_x
 				window.window_y = random_y
+				global_x = int(window.offset_x + random_x)
+				global_y = int(window.offset_y + random_y)
 				hyprctl(['dispatch', 'movewindowpixel', 'exact',
-							 str(random_x), str(random_y), f',address:{window.address}'])
+							str(global_x), str(global_y), f',address:{window.address}'])
 				self.windows.append(window)
 				self.handle_animation(window.workspace_id, True)
 				return
@@ -142,8 +149,13 @@ class HyprDVDManager:
 			# On first update, sync position with Hyprland to get actual position
 			# After that, we manage position ourselves to avoid position conflicts
 			if not window.position_synced:
-				window.window_x, window.window_y = client['at']
+				ax, ay = client['at']                  # absolute coords from Hyprland
+				ox = getattr(window, 'offset_x', 0)    # monitor origin
+				oy = getattr(window, 'offset_y', 0)
+				window.window_x = ax - ox              # store RELATIVE position
+				window.window_y = ay - oy
 				window.position_synced = True
+
 		
 		# Update positions based on velocity
 		for window in self.windows:
@@ -157,35 +169,61 @@ class HyprDVDManager:
 		for window in self.windows:
 			x = int(round(window.window_x))
 			y = int(round(window.window_y))
-			batch_command.append(f'dispatch movewindowpixel exact {x} {y},address:{window.address}')
+			gx = int(window.window_x + getattr(window, 'offset_x', 0))
+			gy = int(window.window_y + getattr(window, 'offset_y', 0))
+			batch_command.append(f'dispatch movewindowpixel exact {gx} {gy},address:{window.address}')
 		if batch_command:
 			hyprctl(['--batch', ';'.join(batch_command)])
+
+	def _current_animation_state(self):
+		'''Return the current Hyprland animations:enabled value (best-effort).'''
+		try:
+			out = hyprctl(['getoption', 'animations:enabled']).stdout.strip()
+			for line in out.splitlines():
+				if line.startswith('int:'):
+					return line.split(':', 1)[1].strip()
+			# fallback: last token
+			tokens = out.split()
+			return tokens[1] if len(tokens) > 1 else '1'
+		except Exception:
+			return '1'
 
 	def handle_animation(self, workspace_id, is_enabled):
 		'''Handle animations for the workspace.'''
 		if is_enabled:
-			if workspace_id not in self.animation_enabled_workspaces:
-				self.animation_enabled_workspaces[workspace_id] = hyprctl(['getoption', 'animations:enabled']).stdout.split()[1]
+			if workspace_id in self._disabled_workspaces:
+				return
+			self._disabled_workspaces.add(workspace_id)
+			if self._animation_original_state is None:
+				self._animation_original_state = self._current_animation_state()
 			hyprctl(['keyword', 'animations:enabled', 'no'])
 		else:
-			if workspace_id in self.animation_enabled_workspaces:
-				hyprctl(['keyword', 'animations:enabled', self.animation_enabled_workspaces.pop(workspace_id)])
+			if workspace_id not in self._disabled_workspaces:
+				return
+			self._disabled_workspaces.remove(workspace_id)
+			if not self._disabled_workspaces and self._animation_original_state is not None:
+				hyprctl(['keyword', 'animations:enabled', self._animation_original_state])
+				self._animation_original_state = None
 
 	def handle_workspace_change(self, event_data):
 		'''Handle workspace change events.'''
-		workspace_id = int(event_data[0])
+		try:
+			workspace_id = int(event_data[0])
+		except (IndexError, ValueError):
+			return
 		if any(w.workspace_id == workspace_id for w in self.windows):
 			self.handle_animation(workspace_id, True)
-		elif self.animation_enabled_workspaces:
-			original_state = next(iter(self.animation_enabled_workspaces.values()))
-			hyprctl(['keyword', 'animations:enabled', original_state])
+		else:
+			self.handle_animation(workspace_id, False)
 
-		for w_id in list(self.animation_enabled_workspaces.keys()):
-			if w_id != workspace_id and not any(w.workspace_id == w_id for w in self.windows):
+		for w_id in list(self._disabled_workspaces):
+			if not any(w.workspace_id == w_id for w in self.windows):
 				self.handle_animation(w_id, False)
 
 	def handle_active_window_change(self, event_data):
 		'''Handle active window change events.'''
+		if len(event_data) < 2 or not event_data[1]:
+			return
 		window_address = f'0x{event_data[1]}'
 		clients = json.loads(hyprctl(['clients', '-j']).stdout)
 		active_window = next((w for w in clients if w['address'] == window_address), None)

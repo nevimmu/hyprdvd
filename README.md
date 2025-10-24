@@ -48,3 +48,24 @@ You can customize the size of bouncing windows using the `--size` flag with the 
 # Make windows 200x150 pixels
 hyprdvd --size 200x150
 ```
+## Multi-monitor screensaver
+
+`hyprdvd` can animate *all visible workspaces* (i.e., one per monitor) without switching focus or warping the cursor. It restores windows cleanly when asked to stop.
+
+### New flags
+
+- `--workspaces <id,id,...>`  
+  Animate only the specified workspace IDs. If omitted, all *visible* workspaces are used (one per monitor).
+
+- `--exit-on {pointer,signal}`  
+  Choose how the screensaver exits:
+  - `pointer` (default): stop when the cursor moves.
+  - `signal`: ignore pointer motion; exit only on `SIGINT` (e.g., via your idle daemon).
+
+### Examples
+
+Run on all visible workspaces, ignore pointer until signaled:
+```bash
+hyprdvd --screensaver --size 200x150 --exit-on signal
+# later:
+pkill -INT hyprdvd

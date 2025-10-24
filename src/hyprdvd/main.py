@@ -22,6 +22,20 @@ def main():
 		action='store',
 		help='Set the size of the bouncing windows (WIDTHxHEIGHT)'
 	)
+
+	parser.add_argument('--workspaces',
+		help='comma-separated workspace IDs',
+		type=str,
+		default=None
+	)
+
+	parser.add_argument('--exit-on',
+		choices=['pointer', 'signal'],
+		default='pointer'
+	)
+
+
+
 	parser.add_argument('-v', '--version', action='version', version=f'HyprDVD v{__version__}')
 	args = parser.parse_args()
 
@@ -38,29 +52,46 @@ def main():
 	manager = HyprDVDManager(size=size)
 
 	if args.screensaver:
-		run_screensaver(manager, size=size)
+		run_screensaver(
+			manager,
+			size=size,
+			workspaces = args.workspaces,
+			exit_on=args.exit_on
+		)
 		return
 
 	# Default behaviour: Connect to Hyprland's socket and listen for events.
 	with socket(AF_UNIX, SOCK_STREAM) as sock:
 		sock.connect(SOCKET_PATH)
 		sock.setblocking(False)
+		buffer = ''
 
 		while True:
 			try:
-				event = sock.recv(4096).decode().strip()
-				if event:
-					for line in event.split('\n'):
-						event_type, event_data = line.split('>>', 1)
-						event_data = event_data.split(',')
-						if event_type == 'openwindow' and len(event_data) > 3 and event_data[3] == 'DVD':
-							manager.add_window(event_data)
-						elif event_type == 'workspace':
-							manager.handle_workspace_change(event_data)
-						elif event_type == 'activewindow':
-							manager.handle_active_window_change(event_data)
+				chunk = sock.recv(4096)
+				if not chunk:
+					print('Hyprland socket closed — exiting')
+					break
+				buffer += chunk.decode(errors='ignore')
 			except BlockingIOError:
 				pass
+
+			while '\n' in buffer:
+				line, buffer = buffer.split('\n', 1)
+				line = line.strip()
+				if not line or '>>' not in line:
+					continue
+
+				event_type, payload = line.split('>>', 1)
+				event_data = payload.split(',')
+
+				if event_type == 'openwindow':
+					if len(event_data) > 3 and event_data[3] == 'DVD':
+						manager.add_window(event_data)
+				elif event_type == 'workspace':
+					manager.handle_workspace_change(event_data)
+				elif event_type == 'activewindow':
+					manager.handle_active_window_change(event_data)
 
 			if manager.windows:
 				manager.update_windows()
