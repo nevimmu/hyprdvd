@@ -4,3 +4,4 @@ src/*.egg-info/
 __pycache__/
 .venv/
 lib
+result

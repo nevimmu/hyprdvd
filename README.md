@@ -16,6 +16,49 @@ A tiny utility for hyprland that makes windows titled "DVD" float and bounce aro
 yay -S hyprdvd
 ```
 
+### For NixOS with home-manager
+
+Add the input to your `flake.nix`:
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    hyprdvd = {
+      url = "github:nevimmu/hyprdvd";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, home-manager, hyprdvd, ... }: {
+    homeConfigurations.youruser = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      modules = [
+        hyprdvd.homeManagerModules.default
+        ./home.nix
+      ];
+    };
+  };
+}
+```
+
+Then in your `home.nix`:
+```nix
+{ config, pkgs, ... }:
+
+{
+  services.hyprdvd = {
+    enable = true;
+    autoStart = true;  # Automatically start with Hyprland
+  };
+}
+```
+
+All configuration is done via command-line arguments. See the Usage section below for available options.
+
 ### From source
 ```bash
 git clone https://github.com/nevimmu/hyprdvd
