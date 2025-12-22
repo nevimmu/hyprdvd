@@ -146,6 +146,7 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 
 	# 3) Save original states and make windows floating
 	saved_windows = []
+	saved_focus = None
 
 	# Compute non-overlapping sizes/positions for all windows in the workspace.
 	# We'll place them on a grid (cols x rows) that fits all windows. Each window
@@ -266,14 +267,22 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 					break
 
 		# save minimal state including original client values so we can restore them
+		orig_at = c.get('at')
+		distance = math.isqrt(orig_at[0] ** 2 + orig_at[1] ** 2)
 		saved_windows.append({
 			'address': addr,
 			'at': anim_at,
 			'size': anim_size,
-			'orig_at': c.get('at'),
+			'fullscreen': c.get('fullscreen'),
+			'fullscreenClient': c.get('fullscreenClient'),
+			'orig_at': orig_at,
 			'orig_size': c.get('size'),
 			'floating': c.get('floating', False),
+			'distance': distance,
 		})
+
+		if c.get('focusHistoryID') == 0:
+			saved_focus = addr
 
 		# Make floating and ensure size/position match animation values
 		hyprctl(['dispatch', 'setfloating', f'address:{addr}'])
@@ -349,9 +358,11 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 		# 5) restore saved windows to original positions/sizes/floating state
 		# Restore window sizes/positions and floating state to their ORIGINAL
 		# values (orig_at / orig_size) when available, while keeping them
-		# floating. Collect original area so we can tile largest->smallest.
-		batch_cmds = []
-		addr_area = []
+		# floating. We use the distance from (0,0) to restore tiling.
+		restore_fullscreen = []
+		
+		saved_windows.sort(key=lambda x: x['distance'], reverse=False)
+
 		for w in saved_windows:
 			addr = w['address']
 			orig_size = w.get('orig_size') or w.get('size')
@@ -360,30 +371,22 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 				hyprctl(['dispatch', 'resizewindowpixel', 'exact', str(orig_size[0]), str(orig_size[1]), f',address:{addr}'])
 			if orig_at:
 				hyprctl(['dispatch', 'movewindowpixel', 'exact', str(orig_at[0]), str(orig_at[1]), f',address:{addr}'])
-			# restore floating state
+			# restore tiling state
 			if not w.get('floating'):
-				hyprctl(['dispatch', 'setfloating', 'no', f'address:{addr}'])
+				hyprctl(['dispatch', 'focuswindow', f'address:{addr}'])
+				hyprctl(['dispatch', 'settiled', f'address:{addr}'])
+			if w.get('fullscreen') or w.get('fullscreenClient'):
+				restore_fullscreen.append((addr, str(w.get('fullscreen')), str(w.get('fullscreenClient'))))
 
-			# compute area for ordering (fallback to animation size if orig_size missing)
-			area = 0
-			try:
-				s = orig_size or w.get('size')
-				area = int((s[0] or 0) * (s[1] or 0))
-			except Exception:
-				area = 0
-			addr_area.append((addr, area))
-
-		# Now tile from largest to smallest by building a batched list of
-		# focus+settiled commands in that order and executing them once.
-		if addr_area:
-			addr_area.sort(key=lambda x: x[1], reverse=True)
-			for addr, _ in addr_area:
-				batch_cmds.append(f'dispatch focuswindow address:{addr}')
-				batch_cmds.append(f'dispatch settiled address:{addr}')
-			if batch_cmds:
-				hyprctl(['--batch', ';'.join(batch_cmds)])
+		# fullscreen state must be restored after rearranging all windows
+		for w in restore_fullscreen:
+			hyprctl(['--batch', 'dispatch', 'focuswindow', f'address:{w[0]}', ';', 'dispatch', 'fullscreenstate',  w[1], w[2]])
 
 		print('Restored windows. Screensaver finished.')
 		# set the cursor back to the saved position if available
 		if saved_cursor is not None:
 			hyprctl(['dispatch', 'movecursor', str(saved_cursor[0]), str(saved_cursor[1])])
+
+		# set the focus back to the window
+		if saved_focus is not None:
+			hyprctl(['dispatch', 'focuswindow', f'address:{saved_focus}'])
