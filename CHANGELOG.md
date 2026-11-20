@@ -1,3 +1,9 @@
+## 0.5.2 (2026-11-20)
+
+### Refactor
+
+- replace hyprctl calls with dispatch functions for window management
+
 ## 0.5.1 (2025-12-22)
 
 ### Fix
