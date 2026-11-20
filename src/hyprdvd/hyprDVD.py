@@ -2,7 +2,7 @@ import random
 import math
 import json
 
-from .utils import hyprctl
+from .utils import hyprctl, dispatch, float_window, resize_window
 from .settings import RESIZE
 
 class HyprDVD:
@@ -98,9 +98,8 @@ class HyprDVD:
 		if random.randrange(101, 200) % 2 == 0:
 			self.velocity_y *= -1
 
-		hyprctl(['dispatch', 'setfloating', f'address:{self.address}'])
-		hyprctl(['dispatch', 'resizewindowpixel', 'exact',
-				 str(self.window_width), str(self.window_height), f',address:{self.address}'])
+		dispatch(float_window(self.address))
+		dispatch(resize_window(self.address, self.window_width, self.window_height))
 
 	def get_screen_size(self):
 		'''Get the screen size'''

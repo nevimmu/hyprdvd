@@ -1,6 +1,6 @@
 import json
 import random
-from .utils import hyprctl
+from .utils import hyprctl, dispatch, dispatch_batch, move_window, close_window, set_animations
 from .hyprDVD import HyprDVD
 
 class HyprDVDManager:
@@ -39,8 +39,7 @@ class HyprDVDManager:
 				window.window_y = random_y
 				global_x = int(window.offset_x + random_x)
 				global_y = int(window.offset_y + random_y)
-				hyprctl(['dispatch', 'movewindowpixel', 'exact',
-							str(global_x), str(global_y), f',address:{window.address}'])
+				dispatch(move_window(window.address, global_x, global_y))
 				self.windows.append(window)
 				self.handle_animation(window.workspace_id, True)
 				return
@@ -48,7 +47,7 @@ class HyprDVDManager:
 			attempts += 1
 
 		# If no space is found after 100 attempts, close the window
-		hyprctl(['dispatch', 'closewindow', f'address:{window.address}'])
+		dispatch(close_window(window.address))
 
 	def cleanup_window(self, window):
 		'''Cleanup a window and restore animation if it's the last one on the workspace.'''
@@ -171,22 +170,19 @@ class HyprDVDManager:
 			y = int(round(window.window_y))
 			gx = int(window.window_x + getattr(window, 'offset_x', 0))
 			gy = int(window.window_y + getattr(window, 'offset_y', 0))
-			batch_command.append(f'dispatch movewindowpixel exact {gx} {gy},address:{window.address}')
-		if batch_command:
-			hyprctl(['--batch', ';'.join(batch_command)])
+			batch_command.append(move_window(window.address, gx, gy))
+		dispatch_batch(batch_command)
 
 	def _current_animation_state(self):
 		'''Return the current Hyprland animations:enabled value (best-effort).'''
 		try:
 			out = hyprctl(['getoption', 'animations:enabled']).stdout.strip()
 			for line in out.splitlines():
-				if line.startswith('int:'):
-					return line.split(':', 1)[1].strip()
-			# fallback: last token
-			tokens = out.split()
-			return tokens[1] if len(tokens) > 1 else '1'
+				if line.startswith(('bool:', 'int:')):
+					return line.split(':', 1)[1].strip().lower() in ('true', '1', 'yes')
+			return True
 		except Exception:
-			return '1'
+			return True
 
 	def handle_animation(self, workspace_id, is_enabled):
 		'''Handle animations for the workspace.'''
@@ -196,13 +192,13 @@ class HyprDVDManager:
 			self._disabled_workspaces.add(workspace_id)
 			if self._animation_original_state is None:
 				self._animation_original_state = self._current_animation_state()
-			hyprctl(['keyword', 'animations:enabled', 'no'])
+			set_animations(False)
 		else:
 			if workspace_id not in self._disabled_workspaces:
 				return
 			self._disabled_workspaces.remove(workspace_id)
 			if not self._disabled_workspaces and self._animation_original_state is not None:
-				hyprctl(['keyword', 'animations:enabled', self._animation_original_state])
+				set_animations(self._animation_original_state)
 				self._animation_original_state = None
 
 	def handle_workspace_change(self, event_data):

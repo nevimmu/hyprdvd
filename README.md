@@ -1,5 +1,7 @@
 # HyprDVD
 
+> **Requires Hyprland ≥ 0.57** (Lua dispatchers). Older releases that only understand the legacy `hyprctl dispatch <name> <args>` syntax are no longer supported.
+
 A tiny utility for hyprland that makes windows titled "DVD" float and bounce around like the classic DVD logo — now with a screensaver mode that temporarily animates all windows on the current workspace and restores them when the cursor moves.
 
 ## Highlights

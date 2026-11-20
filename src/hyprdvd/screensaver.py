@@ -5,7 +5,8 @@ import random
 from collections import defaultdict
 
 from hyprdvd.settings import RESIZE
-from .utils import hyprctl
+from .utils import (hyprctl, dispatch, dispatch_batch, float_window, tile_window, resize_window,
+	move_window, focus_window, fullscreen_state, move_cursor)
 from .hyprDVD import HyprDVD
 
 
@@ -211,9 +212,25 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 			except Exception:
 				pass
 
+		# Float + resize now, then read back the size the window really got:
+		# some apps (discord, spotify...) enforce a minimum size and ignore ours.
+		dispatch(float_window(addr))
+		requested_size = list(anim_size)
+		dispatch(resize_window(addr, anim_size[0], anim_size[1]))
+		try:
+			live = next(w for w in json.loads(hyprctl(['clients', '-j']).stdout) if w['address'] == addr)
+			anim_size = [int(live['size'][0]), int(live['size'][1])]
+		except Exception:
+			pass
+
 		base_at = comp.get('at')
 		if base_at is not None:
 			base_at = list(base_at)
+			# re-center in the cell using the real size
+			base_at[0] += (requested_size[0] - anim_size[0]) // 2
+			base_at[1] += (requested_size[1] - anim_size[1]) // 2
+			base_at[0] = min(max(0, base_at[0]), max(0, sw - anim_size[0]))
+			base_at[1] = min(max(0, base_at[1]), max(0, sh - anim_size[1]))
 		else:
 			try:
 				cx, cy = c.get('at', [0, 0])
@@ -262,8 +279,15 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 					break
 				retries += 1
 				if retries > 50:
-					# give up on jitter and use base position instead
+					# give up on jitter: search the whole screen for a free spot
 					anim_at = list(base_at)
+					for _ in range(200):
+						x = rng.randint(0, max(0, sw - w))
+						y = rng.randint(0, max(0, sh - h))
+						if all(x + w <= rx or rx + rw <= x or y + h <= ry or ry + rh <= y
+								for rx, ry, rw, rh in rects_for_ws):
+							anim_at = [x, y]
+							break
 					break
 
 		# save minimal state including original client values so we can restore them
@@ -285,9 +309,6 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 			saved_focus = addr
 
 		# Make floating and ensure size/position match animation values
-		hyprctl(['dispatch', 'setfloating', f'address:{addr}'])
-		if anim_size:
-			hyprctl(['dispatch', 'resizewindowpixel', 'exact', str(int(anim_size[0])), str(int(anim_size[1])), f',address:{addr}'])
 		# Ensure we have a valid anim_at even if base_at wasn't available
 		if not base_at:
 			# fallback to client position or origin
@@ -304,7 +325,7 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 			ox, oy = ws_origin.get(wsid, (fallback_ox, fallback_oy))
 			gx = int(anim_at[0] + ox)
 			gy = int(anim_at[1] + oy)
-			hyprctl(['dispatch', 'movewindowpixel', 'exact', str(gx), str(gy), f',address:{addr}'])
+			dispatch(move_window(addr, gx, gy))
 			# remember rect to avoid overlaps for next windows
 			placed_rects[wsid].append((anim_at[0], anim_at[1], int(anim_size[0]), int(anim_size[1])))
 
@@ -368,25 +389,25 @@ def run_screensaver(manager, poll_interval=0.02, size=None, workspaces=None, exi
 			orig_size = w.get('orig_size') or w.get('size')
 			orig_at = w.get('orig_at') or w.get('at')
 			if orig_size:
-				hyprctl(['dispatch', 'resizewindowpixel', 'exact', str(orig_size[0]), str(orig_size[1]), f',address:{addr}'])
+				dispatch(resize_window(addr, orig_size[0], orig_size[1]))
 			if orig_at:
-				hyprctl(['dispatch', 'movewindowpixel', 'exact', str(orig_at[0]), str(orig_at[1]), f',address:{addr}'])
+				dispatch(move_window(addr, orig_at[0], orig_at[1]))
 			# restore tiling state
 			if not w.get('floating'):
-				hyprctl(['dispatch', 'focuswindow', f'address:{addr}'])
-				hyprctl(['dispatch', 'settiled', f'address:{addr}'])
+				dispatch(focus_window(addr))
+				dispatch(tile_window(addr))
 			if w.get('fullscreen') or w.get('fullscreenClient'):
 				restore_fullscreen.append((addr, str(w.get('fullscreen')), str(w.get('fullscreenClient'))))
 
 		# fullscreen state must be restored after rearranging all windows
 		for w in restore_fullscreen:
-			hyprctl(['--batch', 'dispatch', 'focuswindow', f'address:{w[0]}', ';', 'dispatch', 'fullscreenstate',  w[1], w[2]])
+			dispatch_batch([focus_window(w[0]), fullscreen_state(w[0], w[1], w[2])])
 
 		print('Restored windows. Screensaver finished.')
 		# set the cursor back to the saved position if available
 		if saved_cursor is not None:
-			hyprctl(['dispatch', 'movecursor', str(saved_cursor[0]), str(saved_cursor[1])])
+			dispatch(move_cursor(saved_cursor[0], saved_cursor[1]))
 
 		# set the focus back to the window
 		if saved_focus is not None:
-			hyprctl(['dispatch', 'focuswindow', f'address:{saved_focus}'])
+			dispatch(focus_window(saved_focus))
